@@ -1,0 +1,65 @@
+#!Jinja2
+[meta]
+  title = CESM CYLC workflow for combining CAM5 and CAM6
+[cylc]
+  UTC mode = True
+  cycle point format = CCYY-MM-DD
+  [[parameters]]
+    # The number of models can be changed here
+    model = 1..2
+
+  [[environment]]
+    CYLC_TASK_CYCLE_MONTH = {{MONTH}}
+
+[scheduling]
+  # Change the run start and end dates here
+  initial cycle point =20100101T0000Z 
+  final cycle point = 20100103T0000Z 
+
+  [[dependencies]]
+  # 6 hourly cycling, initially 3 cycles.
+    [[[R3/PT6H]]]
+      graph = """
+        run_family:finish-all=>copy_to_common_family => ave_data => nudge_family=>dispose_common_data
+             """
+[runtime]
+  [[ave_data]]
+    script = """
+module load cdo
+cd /glade/scratch/${USER}/pseudo
+cdo -ensmean  pseudo_data_* pseudo_data_ave
+"""
+  [[copy_to_common_family]]
+    script = """
+<if first cycle??> mkdir /glade/scratch/${USER]/${case}/common
+cp /glade/scratch/${USER}/${case}/${<model>_dir}/run/${case}.cam2.h1.<cyclepoint??>.nc /glade/scratch/${USER]/${case}/common
+"""
+    [[dispose]]
+    # Globus process, must run on host
+      script = """
+rm -rf /glade/scratch/${USER]/${case}/common
+"""
+    [[run<member>]]
+       inherit = run_family
+    [[run_family]]
+    script = """
+cd ${WORK}/cases/cesm2cam6/cesm2cam6.${CYLC_TASK_CYCLE_MONTH}.$(printf "%02d" ${CYLC_TASK_PARAM_member})
+# USE This to change dynamics subcycle
+#cp ${FCST_HOME}/user_mods/cesm2cam6.base/user_nl_cam.${CYLC_TASK_TRY_NUMBER} user_nl_cam
+ ./case.submit --job case.run
+"""
+    [[[job]]]
+      # Retry each run up to 2 times with different fv_nsplit values
+      # execution retry delays = 2*PT6S
+      batch system = pbs
+      batch submit command template = qsub -q economy -l walltime=02:00:00 -A CESM0021 '%(job)s'
+    [[[directives]]]
+       -r = n
+       -j = oe
+       -V =
+       -S = /bin/bash
+       # dont forget to change this line if you change pelayout
+       # How can we connect this to the pelayout?
+       -l = select=20:ncpus=36:mpiprocs=36:ompthreads=1
+    [[[events]]]
+        handler events = retry, failed
